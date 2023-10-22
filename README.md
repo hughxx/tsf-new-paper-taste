@@ -1,13 +1,9 @@
 # tsf-new-paper-taste [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-<hr>
-
 A code implementation of new papers in the time series forecasting field.
 
 
 ## Installation | Usage
-
-<hr>
 
 One can just **clone** or **download** the project, then run the **run.py**. 
 
@@ -15,15 +11,11 @@ The requirements that needed is very common, if necessary, one can install it by
 
 ## Implemented Model
 
-<hr>
-
 **PatchMixer**: https://arxiv.org/abs/2310.00655
 
 **SegRNN**: https://arxiv.org/abs/2308.11200
 
 ## Others
-
-<hr>
 
 **1.** The model implementation strives to be **as consistent as possible** with the paper, but there is no guarantee of complete fidelity.
 
