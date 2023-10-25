@@ -19,6 +19,6 @@ The requirements that needed is very common, if necessary, one can install it by
 
 **1.** The model implementation strives to be **as consistent as possible** with the paper, but there is no guarantee of complete fidelity.
 
-**2.** So far, the performance **has not reached** the level described in the paper. We **acknowledge** that our implementation of the model may have imperfections, but also **question** the authenticity of the data presented in the paper.
+**2.** So far, some performance **has not reached** the level described in the paper. We **acknowledge** that our implementation of the model may have imperfections, but also **question** the authenticity of the data presented in the paper.
 
 **3.** Welcome **discuss** and **collaborate** to improve it!
