@@ -65,22 +65,62 @@ class RevIN(nn.Module):
         return x
 
 
-class Mlp(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
-        super().__init__()
+class Mlp_feat(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, drop=0.):
+        super(Mlp_feat, self).__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = nn.GELU()
+        self.act = nn.ReLU()
         self.fc2 = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop)
 
-    def forward(self, x):
+    def forward(self, x): # B, L, D -> B, L, D
         x = self.fc1(x)
         x = self.act(x)
         x = self.drop(x)
         x = self.fc2(x)
         x = self.drop(x)
+        return x
+
+class Mlp_time(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, drop=0.):
+        super(Mlp_time, self).__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = nn.ReLU()
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x): # B, D, L -> B, D, L
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        return x
+
+class Mixer_Layer(nn.Module):
+    def __init__(self, time_dim, feat_dim):
+        super(Mixer_Layer, self).__init__()
+
+        # nn.BatchNorm: axis is Integer
+        # nn.LayerNorm: axis is Integer or List[Integer]
+        # given [B, L, D] nn.BatchNorm1d(B) is equal to nn.LayerNorm([L, D])
+
+        # self.batchNorm2D = nn.LayerNorm([time_dim, feat_dim]) # the norm of the paper, seems bad
+        self.batchNorm2D = nn.BatchNorm1d(time_dim)
+        self.MLP_time = Mlp_time(time_dim, time_dim)
+        # self.MLP_feat = Mlp_feat(feat_dim, feat_dim)
+
+    def forward(self, x): # # B, L, D -> B, L, D
+        res1 = x
+        x = self.batchNorm2D(x)
+        x = self.MLP_time(x.permute(0, 2, 1)).permute(0, 2, 1) # B, L, D -> B, D, L -> B, D, L -> B, L, D
+        x = x + res1
+
+        # res2 = x
+        # x = self.batchNorm2D(x)
+        # x = self.MLP_feat(x) # B, L, D -> B, L, D
+        # x = x + res2
         return x
 
 class Backbone(nn.Module):
@@ -89,77 +129,16 @@ class Backbone(nn.Module):
 
         self.seq_len = seq_len = configs.seq_len
         self.pred_len = pred_len = configs.pred_len
+        self.enc_in = enc_in = configs.enc_in
+        self.layer_num = layer_num = 1
 
-        # Patching
-        self.patch_len = patch_len = configs.patch_len # 16
-        self.stride = stride = configs.stride  # 8
-        self.patch_num = patch_num = int((seq_len - patch_len) / stride + 1)
-        self.padding_patch = configs.padding_patch
-        if configs.padding_patch == 'end':  # can be modified to general case
-            self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
-            self.patch_num = patch_num = patch_num + 1
-
-        # 1
-        d_model = patch_len * patch_len
-        self.embed = nn.Linear(patch_len, d_model)
-        self.dropout_embed = nn.Dropout(0.3)
-
-        # 2
-        # self.lin_res = nn.Linear(seq_len, pred_len) # direct res, seems bad
-        self.lin_res = nn.Linear(patch_num * d_model, pred_len)
-        self.dropout_res = nn.Dropout(0.3)
-
-        # 3.1
-        self.depth_conv = nn.Conv1d(patch_num, patch_num, kernel_size=patch_len, stride=patch_len, groups=patch_num)
-        self.depth_activation = nn.GELU()
-        self.depth_norm = nn.BatchNorm1d(patch_num)
-        self.depth_res = nn.Linear(d_model, patch_len)
-        # 3.2
-        # self.point_conv = nn.Conv1d(patch_len,patch_len,kernel_size=1, stride=1)
-        # self.point_activation = nn.GELU()
-        # self.point_norm = nn.BatchNorm1d(patch_len)
-        self.point_conv = nn.Conv1d(patch_num, patch_num, kernel_size=1, stride=1)
-        self.point_activation = nn.GELU()
-        self.point_norm = nn.BatchNorm1d(patch_num)
-        # 4
-        self.mlp = Mlp(patch_len * patch_num, pred_len * 2, pred_len)
+        self.mix_layer = Mixer_Layer(seq_len, enc_in)
+        self.temp_proj = nn.Linear(self.seq_len, self.pred_len)
 
     def forward(self, x): # B, L, D -> B, H, D
-        B, _, D = x.shape
-        L = self.patch_num
-        P = self.patch_len
-
-        # z_res = self.lin_res(x.permute(0, 2, 1)) # B, L, D -> B, H, D
-        # z_res = self.dropout_res(z_res)
-
-        # 1
-        if self.padding_patch == 'end':
-            z = self.padding_patch_layer(x.permute(0, 2, 1))  # B, L, D -> B, D, L -> B, D, L
-        z = z.unfold(dimension=-1, size=self.patch_len, step=self.stride) # B, D, L, P
-        z = z.reshape(B * D, L, P, 1).squeeze(-1)
-        z = self.embed(z) # B * D, L, P -> # B * D, L, d
-        z = self.dropout_embed(z)
-
-        # 2
-        z_res = self.lin_res(z.reshape(B, D, -1)) # B * D, L, d -> B, D, L * d -> B, D, H
-        z_res = self.dropout_res(z_res)
-
-        # 3.1
-        res = self.depth_res(z) # B * D, L, d -> B * D, L, P
-        z_depth = self.depth_conv(z) # B * D, L, d -> B * D, L, P
-        z_depth = self.depth_activation(z_depth)
-        z_depth = self.depth_norm(z_depth)
-        z_depth = z_depth + res
-        # 3.2
-        z_point = self.point_conv(z_depth) # B * D, L, P -> B * D, L, P
-        z_point = self.point_activation(z_point)
-        z_point = self.point_norm(z_point)
-        z_point = z_point.reshape(B, D, -1) # B * D, L, P -> B, D, L * P
-
-        # 4
-        z_mlp = self.mlp(z_point) # B, D, L * P -> B, D, H
-
-        return (z_res + z_mlp).permute(0,2,1)
+        x = self.mix_layer(x) # B, L, D -> B, L, D
+        x = self.temp_proj(x.permute(0, 2, 1)).permute(0, 2, 1) # B, L, D -> B, H, D
+        return x
 
 class Model(nn.Module):
 
@@ -176,6 +155,6 @@ class Model(nn.Module):
     def forward(self, x, batch_x_mark, dec_inp, batch_y_mark):
         z = self.rev(x, 'norm') # B, L, D -> B, L, D
         z = self.backbone(z) # B, L, D -> B, H, D
-        z = self.rev(z, 'denorm') # B, L, D -> B, H, D
+        z = self.rev(z, 'denorm') # B, H, D -> B, H, D
         return z
 

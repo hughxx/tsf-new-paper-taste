@@ -1,6 +1,6 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
-from models import PatchMixer, SegRNN
+from models import PatchMixer, SegRNN, iTransformer, TSMixer
 from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
 
@@ -38,6 +38,8 @@ class Exp_Main(Exp_Basic):
         model_dict = {
             'PatchMixer': PatchMixer,
             'SegRNN': SegRNN,
+            'iTransformer': iTransformer,
+            'TSMixer': TSMixer,
         }
         model = model_dict[self.args.model].Model(self.args).float()
 
